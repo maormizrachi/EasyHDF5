@@ -15,16 +15,28 @@ class HDF5Reader
 public:
     HDF5Reader();
 
+    HDF5Reader(const std::string &filename);
+
     /**
     Loads the file `filename` and prepares it for reading.
     */
     void Load(const std::string &filename);
 
     /**
+        Reads the names of the groups at `path`.
+    */
+    std::vector<std::string> ReadGroupNames(const std::string &path) const;
+
+    /**
+    Checks if the element at `path` exists.
+    */
+    bool Exists(const std::string &path) const;
+
+    /**
     Reads the element at `path` into `data`
     */
     template<typename T>
-    void ReadElement(const std::string &path, T &data);
+    void ReadElement(const std::string &path, T &data) const;
 
 private:
     H5::H5File file_;
@@ -32,28 +44,21 @@ private:
 };
 
 template<typename T>
-void HDF5Reader::ReadElement(const std::string &path, T &data)
+void HDF5Reader::ReadElement(const std::string &path, T &data) const
 {
     if(not loaded_)
     {
         throw std::runtime_error("HDF5Reader: Load() must be called before ReadElement()");
     }
 
-    std::string groupPath;
-    std::string name;
-    if(path.find("/") == std::string::npos)
-    {
-        name = path;
-        groupPath = "";
-    }
-    else
-    {
-        name = path.substr(path.find_last_of("/") + 1);
-        groupPath = path.substr(0, path.find_last_of("/"));
-    }
+    auto [groupPath, name] = HDF5Utils::splitPathAndName(path);
 
-    H5::Group group = HDF5Utils::openGroupPath(file_, groupPath);
-    H5::DataSet dataset = group.openDataSet(name);
+    const H5::Group group = HDF5Utils::openGroupPath(file_, groupPath);
+    if(not group.exists(name))
+    {
+        throw std::runtime_error("HDF5Reader: dataset does not exist: " + path + " in group " + groupPath);
+    }
+    const H5::DataSet dataset = group.openDataSet(name);
 
     if constexpr(HDF5Utils::IsContainer<T>::value)
     {
@@ -63,9 +68,6 @@ void HDF5Reader::ReadElement(const std::string &path, T &data)
     {
         HDF5Reader_detail::ReadScalarData(dataset, data);
     }
-
-    dataset.close();
-    group.close();
 }
 
 #endif // HDF5READER_HPP

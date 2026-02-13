@@ -79,16 +79,8 @@ void HDF5Writer::AddElement(const std::string &path, const T &data, bool write)
     
     element.fullpath = path;
     // datasetName comes right after the last "/"
-    if(path.find("/") == std::string::npos)
-    {
-        element.name = path;
-        element.groupPath = "";
-    }
-    else
-    {
-        element.name = path.substr(path.find_last_of("/") + 1);
-        element.groupPath = path.substr(0, path.find_last_of("/"));
-    }
+
+    std::tie(element.groupPath, element.name) = HDF5Utils::splitPathAndName(path);
 
     element.data = std::make_any<const T*>(&data);
 

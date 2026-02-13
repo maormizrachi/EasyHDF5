@@ -62,4 +62,49 @@ namespace HDF5Utils
         }
         return group;
     }
+
+    const H5::Group openGroupPath(const H5::H5File &file, const std::string &groupPath)
+    {
+        if(groupPath.empty())
+        {
+            return file.openGroup("/");
+        }
+    
+        std::vector<std::string> parts = splitPath(groupPath);
+        H5::Group group = file.openGroup("/");
+        for(const std::string &name : parts)
+        {
+            if(name.empty())
+            {
+                continue;
+            }
+            bool groupExists = group.exists(name);
+            if(not groupExists)
+            {
+                throw std::runtime_error("HDF5Reader: group does not exist: " + name);
+            }
+            H5::Group next = group.openGroup(name);
+            group.close();
+            group = next;
+        }
+        return group;
+    }
+
+    std::pair<std::string, std::string> splitPathAndName(const std::string &path)
+    {
+        std::string groupPath;
+        std::string name;
+        if(path.find("/") == std::string::npos)
+        {
+            name = path;
+            groupPath = "";
+        }
+        else
+        {
+            name = path.substr(path.find_last_of("/") + 1);
+            groupPath = path.substr(0, path.find_last_of("/"));
+        }
+        return std::make_pair(groupPath, name);
+    }
+
 }

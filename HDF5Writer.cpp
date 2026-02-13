@@ -20,17 +20,7 @@ void HDF5Writer::Dump(void)
 void HDF5Writer::AddExternalLink(const std::string &externalFile, const std::string &targetPath, const std::string &linkPath)
 {
     // Create parent groups for the link location
-    std::string groupPath, linkName;
-    if(linkPath.find("/") == std::string::npos)
-    {
-        groupPath = "";
-        linkName = linkPath;
-    }
-    else
-    {
-        linkName = linkPath.substr(linkPath.find_last_of("/") + 1);
-        groupPath = linkPath.substr(0, linkPath.find_last_of("/"));
-    }
+    auto [groupPath, linkName] = HDF5Utils::splitPathAndName(linkPath);
 
     H5::Group group = HDF5Utils::openGroupPath(this->file_, groupPath, true);
     H5Lcreate_external(externalFile.c_str(),  // the other .h5 file
@@ -38,7 +28,6 @@ void HDF5Writer::AddExternalLink(const std::string &externalFile, const std::str
                         group.getId(),         // where the link lives in THIS file
                         linkName.c_str(),      // name of the link
                         H5P_DEFAULT, H5P_DEFAULT);
-    group.close();
 }
 
 HDF5Writer::~HDF5Writer()

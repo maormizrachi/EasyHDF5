@@ -48,6 +48,19 @@ namespace HDF5Utils
     template<typename U, size_t N>
     struct Rank<std::array<U, N>> { static constexpr int value = 1 + Rank<U>::value; };
 
+    /** True if T supports HDF5 compound type (has CreateHDF5CompType or CompTypeCreator<T> is specialized). */
+    template<typename T, typename = void>
+    struct HasCompType : std::false_type {};
+    template<typename T>
+    struct HasCompType<T, std::void_t<decltype(T::CreateHDF5CompType())>> : std::true_type {};
+
+    /** Returns H5::CompType for T. Use CreateHDF5CompType() by default; specialize for custom names (e.g. CreateParticleType). */
+    template<typename T>
+    struct CompTypeCreator
+    {
+        static H5::CompType get() { return T::CreateHDF5CompType(); }
+    };
+
     template<typename T>
     struct HDF5Type
     {
@@ -63,6 +76,10 @@ namespace HDF5Utils
     std::vector<std::string> splitPath(const std::string &path);
 
     H5::Group openGroupPath(H5::H5File &file, const std::string &groupPath, bool create = false);
+
+    const H5::Group openGroupPath(const H5::H5File &file, const std::string &groupPath);
+
+    std::pair<std::string, std::string> splitPathAndName(const std::string &path);
 
     template<typename Container>
     void ContainerResize(Container &c, size_t n)

@@ -43,9 +43,16 @@ namespace HDF5Writer_detail
     {
         if constexpr(not HDF5Utils::IsContainer<T>::value)
         {
-            types.push_back(H5::DataType(HDF5Utils::HDF5Type<T>::value()));
+            if constexpr(HDF5Utils::HasCompType<T>::value)
+            {
+                types.push_back(H5::DataType(HDF5Utils::CompTypeCreator<T>::get()));
+            }
+            else
+            {
+                types.push_back(H5::DataType(HDF5Utils::HDF5Type<T>::value()));
+            }
             return types.back();
-        } 
+        }
         else
         {
             using Inner = typename HDF5Utils::InnerType<T>::type;
@@ -65,7 +72,18 @@ namespace HDF5Writer_detail
         constexpr int vlen_depth = HDF5Utils::Rank<T>::value;
 
         std::vector<hid_t> type_chain;
-        type_chain.push_back(HDF5Utils::HDF5Type<Scalar>::value().getId());
+        H5::CompType comp_type_holder;
+        hid_t base_tid;
+        if constexpr(HDF5Utils::HasCompType<Scalar>::value)
+        {
+            comp_type_holder = HDF5Utils::CompTypeCreator<Scalar>::get();
+            base_tid = comp_type_holder.getId();
+        }
+        else
+        {
+            base_tid = HDF5Utils::HDF5Type<Scalar>::value().getId();
+        }
+        type_chain.push_back(base_tid);
         for (int i = 0; i < vlen_depth; i++)
         {
             type_chain.push_back(H5Tvlen_create(type_chain.back()));
@@ -145,7 +163,11 @@ namespace HDF5Writer_detail
         else
         {
             H5::DataSpace dataspace(ndims, dims);
-            const H5::DataType &mem_type = HDF5Utils::HDF5Type<T>::value();
+            H5::DataType mem_type;
+            if constexpr(HDF5Utils::HasCompType<T>::value)
+                mem_type = H5::DataType(HDF5Utils::CompTypeCreator<T>::get());
+            else
+                mem_type = H5::DataType(HDF5Utils::HDF5Type<T>::value());
             H5::DataSet dataset = group.createDataSet(name, mem_type, dataspace);
             if(data.size() > 0)
             {
@@ -239,7 +261,11 @@ namespace HDF5Writer_detail
     void WriteScalarData(H5::Group &group, const std::string &name, const T &data)
     {
         H5::DataSpace dataspace;
-        const H5::DataType &mem_type = HDF5Utils::HDF5Type<T>::value();
+        H5::DataType mem_type;
+        if constexpr(HDF5Utils::HasCompType<T>::value)
+            mem_type = H5::DataType(HDF5Utils::CompTypeCreator<T>::get());
+        else
+            mem_type = H5::DataType(HDF5Utils::HDF5Type<T>::value());
         H5::DataSet dataset = group.createDataSet(name, mem_type, dataspace);
         dataset.write(&data, mem_type);
     }
