@@ -1,10 +1,9 @@
 #include "HDF5Writer.hpp"
 
-HDF5Writer::HDF5Writer(const std::string &filename)
+HDF5Writer::HDF5Writer(const std::string &filename, bool truncate)
 {
-    this->file_ = H5::H5File(filename, H5F_ACC_TRUNC);
+    this->file_ = H5::H5File(filename, truncate ? H5F_ACC_TRUNC : H5F_ACC_RDWR);
 }
-
 
 void HDF5Writer::Dump(void)
 {
@@ -40,4 +39,18 @@ void HDF5Writer::AddExternalLink(const std::string &externalFile, const std::str
                         linkName.c_str(),      // name of the link
                         H5P_DEFAULT, H5P_DEFAULT);
     group.close();
+}
+
+HDF5Writer::~HDF5Writer()
+{
+    this->Close();
+}
+
+void HDF5Writer::Close(void)
+{
+    if(not closed)
+    {
+        this->file_.close();
+        closed = true;
+    }
 }

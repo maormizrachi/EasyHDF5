@@ -11,7 +11,14 @@
 class HDF5Writer
 {
 public:
-    HDF5Writer(const std::string &filename);
+    HDF5Writer(const std::string &filename, bool truncate = true);
+
+    ~HDF5Writer();
+
+    /**
+    Closes the writer and the file.
+    */
+    void Close(void);
 
     /**
     Dumps the stored data to an HDF5 file.
@@ -19,10 +26,16 @@ public:
     void Dump(void);
     
     /**
+    Writes an element at path `path`.
+    */
+    template<typename T>
+    void WriteElement(const std::string &path, const T &data){this->AddElement(path, data, true);};
+
+    /**
     Adds an element to the writer. `data` MUST be accessible in `Dump()`.
     */
     template<typename T>
-    void AddElement(const std::string &path, const T &data);
+    void AddElement(const std::string &path, const T &data, bool write = false);
 
     /**
     Adds a HDF5 external link to `targetPath` in file `externalFile`, saved in `linkPath` in the current file.
@@ -54,12 +67,13 @@ private:
         }
     };
 
+    bool closed = false;
     H5::H5File file_;
     std::set<Element> data;
 };
 
 template<typename T>
-void HDF5Writer::AddElement(const std::string &path, const T &data)
+void HDF5Writer::AddElement(const std::string &path, const T &data, bool write)
 {
     Element element;
     
@@ -91,7 +105,16 @@ void HDF5Writer::AddElement(const std::string &path, const T &data)
         }
     };
 
-    this->data.insert(element);
+    if(write)
+    {
+        H5::Group group = HDF5Utils::openGroupPath(this->file_, element.groupPath, true);
+        element.write(group);
+        group.close();
+    }
+    else
+    {
+        this->data.insert(element);
+    }
 }
 
 
