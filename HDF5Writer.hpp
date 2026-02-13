@@ -1,0 +1,98 @@
+#ifndef HDF5WRITER_HPP
+#define HDF5WRITER_HPP
+
+#include <H5Cpp.h>
+#include <string>
+#include <functional>
+#include <set>
+#include <any>
+#include "HDF5Writer_detail.hpp"
+
+class HDF5Writer
+{
+public:
+    HDF5Writer(const std::string &filename);
+
+    /**
+    Dumps the stored data to an HDF5 file.
+    */
+    void Dump(void);
+    
+    /**
+    Adds an element to the writer. `data` MUST be accessible in `Dump()`.
+    */
+    template<typename T>
+    void AddElement(const std::string &path, const T &data);
+
+    /**
+    Adds a HDF5 external link to `targetPath` in file `externalFile`, saved in `linkPath` in the current file.
+    */
+    void AddExternalLink(const std::string &externalFile, const std::string &targetPath, const std::string &linkPath);
+
+private:
+    struct Element
+    {
+        std::string fullpath;
+        std::string groupPath;
+        std::string name;
+        std::function<void(H5::Group&)> write;
+        std::any data;
+
+        bool operator<(const Element& other) const
+        {
+            return fullpath < other.fullpath;
+        }
+
+        bool operator==(const Element& other) const
+        {
+            return fullpath == other.fullpath;
+        }
+
+        bool operator!=(const Element& other) const
+        {
+            return not this->operator==(other);
+        }
+    };
+
+    H5::H5File file_;
+    std::set<Element> data;
+};
+
+template<typename T>
+void HDF5Writer::AddElement(const std::string &path, const T &data)
+{
+    Element element;
+    
+    element.fullpath = path;
+    // datasetName comes right after the last "/"
+    if(path.find("/") == std::string::npos)
+    {
+        element.name = path;
+        element.groupPath = "";
+    }
+    else
+    {
+        element.name = path.substr(path.find_last_of("/") + 1);
+        element.groupPath = path.substr(0, path.find_last_of("/"));
+    }
+
+    element.data = std::make_any<const T*>(&data);
+
+    element.write = [element](H5::Group &group)
+    {
+        const T &data = *std::any_cast<const T*>(element.data);
+        if constexpr(HDF5Utils::IsContainer<T>::value)
+        {
+            HDF5Writer_detail::WriteContainerData(group, element.name, data);
+        }
+        else
+        {
+            HDF5Writer_detail::WriteScalarData(group, element.name, data);
+        }
+    };
+
+    this->data.insert(element);
+}
+
+
+#endif // HDF5WRITER_HPP
