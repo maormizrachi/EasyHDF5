@@ -165,11 +165,24 @@ namespace HDF5Writer_detail
             H5::DataSpace dataspace(ndims, dims);
             H5::DataType mem_type;
             if constexpr(HDF5Utils::HasCompType<T>::value)
+            {
                 mem_type = H5::DataType(HDF5Utils::CompTypeCreator<T>::get());
+            }
             else
+            {
                 mem_type = H5::DataType(HDF5Utils::HDF5Type<T>::value());
-            H5::DataSet dataset = group.createDataSet(name, mem_type, dataspace);
-            if(data.size() > 0)
+            }
+
+            H5::DataType file_type = mem_type;
+            if constexpr(HDF5Utils::HasCompType<T>::value)
+            {
+                hid_t packed_id = H5Tcopy(mem_type.getId());
+                H5Tpack(packed_id);
+                file_type = H5::DataType(packed_id);
+            }
+
+            H5::DataSet dataset = group.createDataSet(name, file_type, dataspace);
+            if(not data.empty())
             {
                 dataset.write(data.data(), mem_type);
             }
