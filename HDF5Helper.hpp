@@ -72,6 +72,7 @@ namespace HDF5Utils
     template<> struct HDF5Type<long> { static const H5::PredType& value() { return H5::PredType::NATIVE_LONG; } };
     template<> struct HDF5Type<size_t> { static const H5::PredType& value() { return H5::PredType::NATIVE_ULLONG; } };
     template<> struct HDF5Type<unsigned long long> { static const H5::PredType& value() { return H5::PredType::NATIVE_ULLONG; } };
+    template<> struct HDF5Type<std::string> { static H5::StrType value() { return H5::StrType(H5::PredType::C_S1, H5T_VARIABLE); } };
 
     std::vector<std::string> splitPath(const std::string &path);
 

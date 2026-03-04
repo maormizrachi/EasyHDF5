@@ -160,6 +160,19 @@ namespace HDF5Writer_detail
             flattenRectangular(data, flat);
             WriteRectangularData(group, name, flat, dims, ndims);
         }
+        else if constexpr(std::is_same_v<T, std::string>)
+        {
+            H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
+            H5::DataSpace dataspace(ndims, dims);
+            H5::DataSet dataset = group.createDataSet(name, strType, dataspace);
+            if(not data.empty())
+            {
+                std::vector<const char*> cstrs(data.size());
+                for(size_t i = 0; i < data.size(); i++)
+                    cstrs[i] = data[i].c_str();
+                dataset.write(cstrs.data(), strType);
+            }
+        }
         else
         {
             H5::DataSpace dataspace(ndims, dims);
@@ -273,14 +286,25 @@ namespace HDF5Writer_detail
     template<typename T>
     void WriteScalarData(H5::Group &group, const std::string &name, const T &data)
     {
-        H5::DataSpace dataspace;
-        H5::DataType mem_type;
-        if constexpr(HDF5Utils::HasCompType<T>::value)
-            mem_type = H5::DataType(HDF5Utils::CompTypeCreator<T>::get());
+        if constexpr(std::is_same_v<T, std::string>)
+        {
+            H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
+            H5::DataSpace dataspace;
+            H5::DataSet dataset = group.createDataSet(name, strType, dataspace);
+            const char *cstr = data.c_str();
+            dataset.write(&cstr, strType);
+        }
         else
-            mem_type = H5::DataType(HDF5Utils::HDF5Type<T>::value());
-        H5::DataSet dataset = group.createDataSet(name, mem_type, dataspace);
-        dataset.write(&data, mem_type);
+        {
+            H5::DataSpace dataspace;
+            H5::DataType mem_type;
+            if constexpr(HDF5Utils::HasCompType<T>::value)
+                mem_type = H5::DataType(HDF5Utils::CompTypeCreator<T>::get());
+            else
+                mem_type = H5::DataType(HDF5Utils::HDF5Type<T>::value());
+            H5::DataSet dataset = group.createDataSet(name, mem_type, dataspace);
+            dataset.write(&data, mem_type);
+        }
     }
 }
 

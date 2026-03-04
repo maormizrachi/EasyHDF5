@@ -13,12 +13,24 @@ namespace HDF5Reader_detail
     template<typename T>
     void ReadScalarData(const H5::DataSet &dataset, T &data)
     {
-        H5::DataType mem_type;
-        if constexpr(HDF5Utils::HasCompType<T>::value)
-            mem_type = H5::DataType(HDF5Utils::CompTypeCreator<T>::get());
+        if constexpr(std::is_same_v<T, std::string>)
+        {
+            H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
+            char *cstr = nullptr;
+            dataset.read(&cstr, strType);
+            data = std::string(cstr);
+            H5::DataSpace space = dataset.getSpace();
+            H5Dvlen_reclaim(strType.getId(), space.getId(), H5P_DEFAULT, &cstr);
+        }
         else
-            mem_type = H5::DataType(HDF5Utils::HDF5Type<T>::value());
-        dataset.read(&data, mem_type);
+        {
+            H5::DataType mem_type;
+            if constexpr(HDF5Utils::HasCompType<T>::value)
+                mem_type = H5::DataType(HDF5Utils::CompTypeCreator<T>::get());
+            else
+                mem_type = H5::DataType(HDF5Utils::HDF5Type<T>::value());
+            dataset.read(&data, mem_type);
+        }
     }
 
     template<typename Scalar, typename Vec>
@@ -57,20 +69,65 @@ namespace HDF5Reader_detail
             {
                 total *= dims[i];
             }
-            std::vector<Scalar> flat(total);
-            H5::DataType mem_type;
-            if constexpr(HDF5Utils::HasCompType<Scalar>::value)
-                mem_type = H5::DataType(HDF5Utils::CompTypeCreator<Scalar>::get());
-            else
-                mem_type = H5::DataType(HDF5Utils::HDF5Type<Scalar>::value());
-            dataset.read(flat.data(), mem_type);
 
-            HDF5Utils::ContainerResize(data, dims[0]);
-            size_t stride = 1;
-            for (int i = 1; i < ndims; ++i) stride *= dims[i];
-            for (hsize_t i = 0; i < dims[0]; ++i)
+            if constexpr(std::is_same_v<Scalar, std::string>)
             {
-                ReadRectangularDataUnflatten<Scalar>(flat.data() + i * stride, dims + 1, ndims - 1, data[i]);
+                std::vector<std::string> flat(total);
+                if(total > 0)
+                {
+                    H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
+                    std::vector<char*> rdata(total);
+                    dataset.read(rdata.data(), strType);
+                    for(size_t i = 0; i < total; i++)
+                        flat[i] = std::string(rdata[i]);
+                    H5::DataSpace space = dataset.getSpace();
+                    H5Dvlen_reclaim(strType.getId(), space.getId(), H5P_DEFAULT, rdata.data());
+                }
+
+                HDF5Utils::ContainerResize(data, dims[0]);
+                size_t stride = 1;
+                for(int i = 1; i < ndims; ++i) stride *= dims[i];
+                for(hsize_t i = 0; i < dims[0]; ++i)
+                {
+                    ReadRectangularDataUnflatten<std::string>(flat.data() + i * stride, dims + 1, ndims - 1, data[i]);
+                }
+            }
+            else
+            {
+                std::vector<Scalar> flat(total);
+                H5::DataType mem_type;
+                if constexpr(HDF5Utils::HasCompType<Scalar>::value)
+                    mem_type = H5::DataType(HDF5Utils::CompTypeCreator<Scalar>::get());
+                else
+                    mem_type = H5::DataType(HDF5Utils::HDF5Type<Scalar>::value());
+                dataset.read(flat.data(), mem_type);
+
+                HDF5Utils::ContainerResize(data, dims[0]);
+                size_t stride = 1;
+                for (int i = 1; i < ndims; ++i) stride *= dims[i];
+                for (hsize_t i = 0; i < dims[0]; ++i)
+                {
+                    ReadRectangularDataUnflatten<Scalar>(flat.data() + i * stride, dims + 1, ndims - 1, data[i]);
+                }
+            }
+        }
+        else if constexpr(std::is_same_v<T, std::string>)
+        {
+            size_t total = 1;
+            for(int i = 0; i < ndims; ++i)
+            {
+                total *= dims[i];
+            }
+            HDF5Utils::ContainerResize(data, total);
+            if(total > 0)
+            {
+                H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
+                std::vector<char*> rdata(total);
+                dataset.read(rdata.data(), strType);
+                for(size_t i = 0; i < total; i++)
+                    data[i] = std::string(rdata[i]);
+                H5::DataSpace space = dataset.getSpace();
+                H5Dvlen_reclaim(strType.getId(), space.getId(), H5P_DEFAULT, rdata.data());
             }
         }
         else
