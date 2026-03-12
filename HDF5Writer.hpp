@@ -32,6 +32,12 @@ public:
     void WriteElement(const std::string &path, const T &data){this->AddElement(path, data, true);};
 
     /**
+    Writes the first `count` elements from a contiguous container (zero-copy).
+    */
+    template<typename Container>
+    void WriteSlice(const std::string &path, const Container &data, size_t count);
+
+    /**
     Adds an element to the writer. `data` MUST be accessible in `Dump()`.
     */
     template<typename T>
@@ -109,5 +115,59 @@ void HDF5Writer::AddElement(const std::string &path, const T &data, bool write)
     }
 }
 
+template<typename Container>
+void HDF5Writer::WriteSlice(const std::string &path, const Container &data, size_t count)
+{
+    using T = typename Container::value_type;
+    static_assert(!HDF5Utils::IsContainer<T>::value,
+                  "WriteSlice only supports flat containers (no nested vectors)");
+
+    auto [groupPath, name] = HDF5Utils::splitPathAndName(path);
+    H5::Group group = HDF5Utils::openGroupPath(this->file_, groupPath, true);
+
+    hsize_t dims[] = {static_cast<hsize_t>(count)};
+    H5::DataSpace dataspace(1, dims);
+
+    if constexpr(std::is_same_v<T, std::string>)
+    {
+        H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
+        H5::DataSet dataset = group.createDataSet(name, strType, dataspace);
+        if(count > 0)
+        {
+            std::vector<const char*> cstrs(count);
+            for (size_t i = 0; i < count; i++)
+                cstrs[i] = data[i].c_str();
+            dataset.write(cstrs.data(), strType);
+        }
+    }
+    else
+    {
+        H5::DataType mem_type;
+        if constexpr(HDF5Utils::HasCompType<T>::value)
+        {
+            mem_type = H5::DataType(HDF5Utils::CompTypeCreator<T>::get());
+        }
+        else
+        {
+            mem_type = H5::DataType(HDF5Utils::HDF5Type<T>::value());
+        }
+
+        H5::DataType file_type = mem_type;
+        if constexpr(HDF5Utils::HasCompType<T>::value)
+        {
+            hid_t packed_id = H5Tcopy(mem_type.getId());
+            H5Tpack(packed_id);
+            file_type = H5::DataType(packed_id);
+        }
+
+        H5::DataSet dataset = group.createDataSet(name, file_type, dataspace);
+        if(count > 0)
+        {
+            dataset.write(data.data(), mem_type);
+        }
+    }
+
+    group.close();
+}
 
 #endif // HDF5WRITER_HPP
