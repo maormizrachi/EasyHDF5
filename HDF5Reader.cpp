@@ -38,5 +38,14 @@ bool HDF5Reader::Exists(const std::string &path) const
         throw std::runtime_error("HDF5Reader: Load() must be called before Exists()");
     }
 
-    return H5Lexists(this->file_.getId(), path.c_str(), H5P_DEFAULT) > 0;
+    H5E_auto2_t old_func;
+    void *old_client_data;
+    H5Eget_auto2(H5E_DEFAULT, &old_func, &old_client_data);
+    H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
+
+    htri_t result = H5Lexists(this->file_.getId(), path.c_str(), H5P_DEFAULT);
+
+    H5Eset_auto2(H5E_DEFAULT, old_func, old_client_data);
+
+    return result > 0;
 }
