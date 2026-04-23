@@ -29,65 +29,40 @@ namespace HDF5Utils
         return parts;
     }
     
-    H5::Group openGroupPath(H5::H5File &file, const std::string &groupPath, bool create)
+    hid_t openGroupPath(hid_t loc_id, const std::string &groupPath, bool create)
     {
         if(groupPath.empty())
         {
-            return file.openGroup("/");
+            return H5Gopen2(loc_id, "/", H5P_DEFAULT);
         }
     
         std::vector<std::string> parts = splitPath(groupPath);
-        H5::Group group = file.openGroup("/");
+        hid_t current = H5Gopen2(loc_id, "/", H5P_DEFAULT);
         for(const std::string &name : parts)
         {
             if(name.empty())
             {
                 continue;
             }
-            bool groupExists = group.exists(name);
-            if(not groupExists)
+            htri_t exists = H5Lexists(current, name.c_str(), H5P_DEFAULT);
+            if(exists <= 0)
             {
                 if(create)
                 {
-                    group.createGroup(name);
+                    hid_t created = H5Gcreate2(current, name.c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+                    H5Gclose(created);
                 }
                 else
                 {
+                    H5Gclose(current);
                     throw std::runtime_error("HDF5Reader: group does not exist: " + name);
                 }
             }
-            H5::Group next = group.openGroup(name);
-            group.close();
-            group = next;
+            hid_t next = H5Gopen2(current, name.c_str(), H5P_DEFAULT);
+            H5Gclose(current);
+            current = next;
         }
-        return group;
-    }
-
-    const H5::Group openGroupPath(const H5::H5File &file, const std::string &groupPath)
-    {
-        if(groupPath.empty())
-        {
-            return file.openGroup("/");
-        }
-    
-        std::vector<std::string> parts = splitPath(groupPath);
-        H5::Group group = file.openGroup("/");
-        for(const std::string &name : parts)
-        {
-            if(name.empty())
-            {
-                continue;
-            }
-            bool groupExists = group.exists(name);
-            if(not groupExists)
-            {
-                throw std::runtime_error("HDF5Reader: group does not exist: " + name);
-            }
-            H5::Group next = group.openGroup(name);
-            group.close();
-            group = next;
-        }
-        return group;
+        return current;
     }
 
     std::pair<std::string, std::string> splitPathAndName(const std::string &path)

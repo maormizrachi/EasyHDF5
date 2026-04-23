@@ -1,7 +1,7 @@
 #ifndef HDF5READER_DETAIL_HPP
 #define HDF5READER_DETAIL_HPP
 
-#include <H5Cpp.h>
+#include <hdf5.h>
 #include <vector>
 #include <algorithm>
 #include <stdexcept>
@@ -11,25 +11,25 @@
 namespace HDF5Reader_detail
 {
     template<typename T>
-    void ReadScalarData(const H5::DataSet &dataset, T &data)
+    void ReadScalarData(hid_t dataset_id, T &data)
     {
         if constexpr(std::is_same_v<T, std::string>)
         {
-            H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
+            hid_t strType = HDF5Utils::HDF5Type<std::string>::value();
             char *cstr = nullptr;
-            dataset.read(&cstr, strType);
+            H5Dread(dataset_id, strType, H5S_ALL, H5S_ALL, H5P_DEFAULT, &cstr);
             data = std::string(cstr);
-            H5::DataSpace space = dataset.getSpace();
-            H5Dvlen_reclaim(strType.getId(), space.getId(), H5P_DEFAULT, &cstr);
+            HDF5Utils::HID space(H5Dget_space(dataset_id));
+            H5Dvlen_reclaim(strType, space, H5P_DEFAULT, &cstr);
         }
         else
         {
-            H5::DataType mem_type;
+            hid_t mem_type;
             if constexpr(HDF5Utils::HasCompType<T>::value)
-                mem_type = H5::DataType(HDF5Utils::CompTypeCreator<T>::get());
+                mem_type = HDF5Utils::CompTypeCreator<T>::get();
             else
-                mem_type = H5::DataType(HDF5Utils::HDF5Type<T>::value());
-            dataset.read(&data, mem_type);
+                mem_type = HDF5Utils::HDF5Type<T>::value();
+            H5Dread(dataset_id, mem_type, H5S_ALL, H5S_ALL, H5P_DEFAULT, &data);
         }
     }
 
@@ -58,7 +58,7 @@ namespace HDF5Reader_detail
     }
 
     template<typename Container>
-    void ReadRectangularData(const H5::DataSet &dataset, Container &data, const hsize_t *dims, int ndims)
+    void ReadRectangularData(hid_t dataset_id, Container &data, const hsize_t *dims, int ndims)
     {
         using T = typename Container::value_type;
         if constexpr(HDF5Utils::IsContainer<T>::value)
@@ -75,13 +75,13 @@ namespace HDF5Reader_detail
                 std::vector<std::string> flat(total);
                 if(total > 0)
                 {
-                    H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
+                    hid_t strType = HDF5Utils::HDF5Type<std::string>::value();
                     std::vector<char*> rdata(total);
-                    dataset.read(rdata.data(), strType);
+                    H5Dread(dataset_id, strType, H5S_ALL, H5S_ALL, H5P_DEFAULT, rdata.data());
                     for(size_t i = 0; i < total; i++)
                         flat[i] = std::string(rdata[i]);
-                    H5::DataSpace space = dataset.getSpace();
-                    H5Dvlen_reclaim(strType.getId(), space.getId(), H5P_DEFAULT, rdata.data());
+                    HDF5Utils::HID space(H5Dget_space(dataset_id));
+                    H5Dvlen_reclaim(strType, space, H5P_DEFAULT, rdata.data());
                 }
 
                 HDF5Utils::ContainerResize(data, dims[0]);
@@ -95,12 +95,12 @@ namespace HDF5Reader_detail
             else
             {
                 std::vector<Scalar> flat(total);
-                H5::DataType mem_type;
+                hid_t mem_type;
                 if constexpr(HDF5Utils::HasCompType<Scalar>::value)
-                    mem_type = H5::DataType(HDF5Utils::CompTypeCreator<Scalar>::get());
+                    mem_type = HDF5Utils::CompTypeCreator<Scalar>::get();
                 else
-                    mem_type = H5::DataType(HDF5Utils::HDF5Type<Scalar>::value());
-                dataset.read(flat.data(), mem_type);
+                    mem_type = HDF5Utils::HDF5Type<Scalar>::value();
+                H5Dread(dataset_id, mem_type, H5S_ALL, H5S_ALL, H5P_DEFAULT, flat.data());
 
                 HDF5Utils::ContainerResize(data, dims[0]);
                 size_t stride = 1;
@@ -121,13 +121,13 @@ namespace HDF5Reader_detail
             HDF5Utils::ContainerResize(data, total);
             if(total > 0)
             {
-                H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
+                hid_t strType = HDF5Utils::HDF5Type<std::string>::value();
                 std::vector<char*> rdata(total);
-                dataset.read(rdata.data(), strType);
+                H5Dread(dataset_id, strType, H5S_ALL, H5S_ALL, H5P_DEFAULT, rdata.data());
                 for(size_t i = 0; i < total; i++)
                     data[i] = std::string(rdata[i]);
-                H5::DataSpace space = dataset.getSpace();
-                H5Dvlen_reclaim(strType.getId(), space.getId(), H5P_DEFAULT, rdata.data());
+                HDF5Utils::HID space(H5Dget_space(dataset_id));
+                H5Dvlen_reclaim(strType, space, H5P_DEFAULT, rdata.data());
             }
         }
         else
@@ -138,35 +138,30 @@ namespace HDF5Reader_detail
                 total *= dims[i];
             }
             HDF5Utils::ContainerResize(data, total);
-            H5::DataType mem_type;
+            hid_t mem_type;
             if constexpr(HDF5Utils::HasCompType<T>::value)
-                mem_type = H5::DataType(HDF5Utils::CompTypeCreator<T>::get());
+                mem_type = HDF5Utils::CompTypeCreator<T>::get();
             else
-                mem_type = H5::DataType(HDF5Utils::HDF5Type<T>::value());
+                mem_type = HDF5Utils::HDF5Type<T>::value();
             if(not data.empty())
             {
-                dataset.read(data.data(), mem_type);
+                H5Dread(dataset_id, mem_type, H5S_ALL, H5S_ALL, H5P_DEFAULT, data.data());
             }
         }
     }
 
-    // Generic VLEN recursion: Container can be any mix of vector/array at each level.
-    // Leaf case: Container holds scalars (e.g., vector<int> or array<int, N>).
-    // Recursive case: Container holds sub-containers (e.g., array<vector<int>, N>, vector<vector<int>>).
     template<typename Container>
     void ReadJaggedDataNestedVLENImpl(void *ptr, size_t count, Container &out, hid_t inner_tid)
     {
         using T = typename Container::value_type;
         if constexpr(not HDF5Utils::IsContainer<T>::value)
         {
-            // Leaf: Container holds scalars — copy raw data
             HDF5Utils::ContainerResize(out, count);
             T *raw = static_cast<T*>(ptr);
             std::copy(raw, raw + count, out.begin());
         }
         else
         {
-            // Recursive: Container holds sub-containers
             hvl_t *inner = static_cast<hvl_t*>(ptr);
             HDF5Utils::ContainerResize(out, count);
             for(size_t i = 0; i < count; i++)
@@ -180,7 +175,6 @@ namespace HDF5Reader_detail
                 }
                 else
                 {
-                    // Leaf VLEN level: out[i] is a container of scalars
                     using Scalar = typename T::value_type;
                     HDF5Utils::ContainerResize(out[i], inner[i].len);
                     if(inner[i].len > 0)
@@ -192,26 +186,22 @@ namespace HDF5Reader_detail
         }
     }
 
-    // Container can be vector<vector<T>> or array<vector<T>, N> etc.
-    // Inner elements (data[i]) are always vectors since jagged = variable-length.
     template<typename Container>
-    void ReadJaggedDataNestedVLEN(const H5::DataSet &dataset, Container &data)
+    void ReadJaggedDataNestedVLEN(hid_t dataset_id, Container &data)
     {
         using Inner = typename Container::value_type;
         using T = typename Inner::value_type;
         using Scalar = typename HDF5Utils::InnerType<T>::type;
         constexpr int vlen_depth = HDF5Utils::Rank<T>::value;
 
-        H5::CompType comp_type_holder;
         hid_t base_tid;
         if constexpr(HDF5Utils::HasCompType<Scalar>::value)
         {
-            comp_type_holder = HDF5Utils::CompTypeCreator<Scalar>::get();
-            base_tid = comp_type_holder.getId();
+            base_tid = HDF5Utils::CompTypeCreator<Scalar>::get();
         }
         else
         {
-            base_tid = HDF5Utils::HDF5Type<Scalar>::value().getId();
+            base_tid = HDF5Utils::HDF5Type<Scalar>::value();
         }
         std::vector<hid_t> type_chain;
         type_chain.push_back(base_tid);
@@ -221,12 +211,12 @@ namespace HDF5Reader_detail
         }
         hid_t vlen_tid = type_chain.back();
 
+        HDF5Utils::HID filespace(H5Dget_space(dataset_id));
         hsize_t dims[1];
-        const H5::DataSpace filespace = dataset.getSpace();
-        filespace.getSimpleExtentDims(dims);
+        H5Sget_simple_extent_dims(filespace, dims, nullptr);
 
         std::vector<hvl_t> vhl(dims[0]);
-        H5Dread(dataset.getId(), vlen_tid, H5S_ALL, H5S_ALL, H5P_DEFAULT, vhl.data());
+        H5Dread(dataset_id, vlen_tid, H5S_ALL, H5S_ALL, H5P_DEFAULT, vhl.data());
 
         HDF5Utils::ContainerResize(data, dims[0]);
         for(hsize_t i = 0; i < dims[0]; i++)
@@ -235,34 +225,32 @@ namespace HDF5Reader_detail
             ReadJaggedDataNestedVLENImpl(vhl[i].p, vhl[i].len, data[i], inner_tid);
         }
 
-        H5Dvlen_reclaim(vlen_tid, filespace.getId(), H5P_DEFAULT, vhl.data());
+        H5Dvlen_reclaim(vlen_tid, filespace, H5P_DEFAULT, vhl.data());
         for(size_t i = 1; i < type_chain.size(); i++)
         {
             H5Tclose(type_chain[i]);
         }
     }
 
-    // Container can be vector<vector<T>> or array<vector<T>, N>.
-    // Inner elements (data[i]) must be std::vector<T> (scalar T).
     template<typename Container>
-    void ReadJaggedDataImpl(const H5::DataSet &dataset, Container &data, hid_t vlen_tid)
+    void ReadJaggedDataImpl(hid_t dataset_id, Container &data, hid_t vlen_tid)
     {
         using Inner = typename Container::value_type;
         using T = typename Inner::value_type;
 
-        H5::DataType base_type;
+        hid_t base_type;
         if constexpr(HDF5Utils::HasCompType<T>::value)
-            base_type = H5::DataType(HDF5Utils::CompTypeCreator<T>::get());
+            base_type = HDF5Utils::CompTypeCreator<T>::get();
         else
-            base_type = H5::DataType(HDF5Utils::HDF5Type<T>::value());
+            base_type = HDF5Utils::HDF5Type<T>::value();
 
+        HDF5Utils::HID filespace(H5Dget_space(dataset_id));
         hsize_t dims[1];
-        const H5::DataSpace filespace = dataset.getSpace();
-        filespace.getSimpleExtentDims(dims);
+        H5Sget_simple_extent_dims(filespace, dims, nullptr);
 
+        hid_t vlen_type = H5Tvlen_create(base_type);
         std::vector<hvl_t> vhl(dims[0]);
-        H5::VarLenType vlen_type(&base_type);
-        dataset.read(vhl.data(), vlen_type);
+        H5Dread(dataset_id, vlen_type, H5S_ALL, H5S_ALL, H5P_DEFAULT, vhl.data());
 
         HDF5Utils::ContainerResize(data, dims[0]);
         for(hsize_t i = 0; i < dims[0]; i++)
@@ -272,65 +260,63 @@ namespace HDF5Reader_detail
                 memcpy(data[i].data(), vhl[i].p, vhl[i].len * sizeof(T));
         }
 
-        H5Dvlen_reclaim(vlen_tid, filespace.getId(), H5P_DEFAULT, vhl.data());
+        H5Dvlen_reclaim(vlen_tid, filespace, H5P_DEFAULT, vhl.data());
+        H5Tclose(vlen_type);
     }
 
     template<typename Container>
-    void ReadJaggedDataFromVlen(const H5::DataSet &dataset, Container &data)
+    void ReadJaggedDataFromVlen(hid_t dataset_id, Container &data)
     {
         using Inner = typename Container::value_type;
         using T = typename Inner::value_type;
 
-        const H5T_class_t type_class = dataset.getTypeClass();
-        if(type_class != H5T_VLEN) 
+        HDF5Utils::HID dtype(H5Dget_type(dataset_id));
+        const H5T_class_t type_class = H5Tget_class(dtype);
+        if(type_class != H5T_VLEN)
         {
-            const H5::DataSpace filespace = dataset.getSpace();
-            int ndims = filespace.getSimpleExtentNdims();
+            HDF5Utils::HID filespace(H5Dget_space(dataset_id));
+            int ndims = H5Sget_simple_extent_ndims(filespace);
             std::vector<hsize_t> dims(ndims);
-            filespace.getSimpleExtentDims(dims.data());
-            ReadRectangularData(dataset, data, dims.data(), ndims);
+            H5Sget_simple_extent_dims(filespace, dims.data(), nullptr);
+            ReadRectangularData(dataset_id, data, dims.data(), ndims);
             return;
         }
 
-        H5::VarLenType vlen_type = dataset.getVarLenType();
-        const H5T_class_t base_class = H5Tget_class(vlen_type.getId());
+        hid_t base_id = H5Tget_super(dtype);
+        const H5T_class_t base_class = H5Tget_class(base_id);
+        H5Tclose(base_id);
+
         if(base_class == H5T_VLEN)
         {
-            ReadJaggedDataNestedVLEN(dataset, data);
+            ReadJaggedDataNestedVLEN(dataset_id, data);
             return;
         }
 
         if constexpr(not HDF5Utils::IsContainer<T>::value)
         {
-            H5::CompType comp_type_holder;
             hid_t base_tid;
             if constexpr(HDF5Utils::HasCompType<T>::value)
-            {
-                comp_type_holder = HDF5Utils::CompTypeCreator<T>::get();
-                base_tid = comp_type_holder.getId();
-            }
+                base_tid = HDF5Utils::CompTypeCreator<T>::get();
             else
-            {
-                base_tid = HDF5Utils::HDF5Type<T>::value().getId();
-            }
+                base_tid = HDF5Utils::HDF5Type<T>::value();
             const hid_t vlen_tid = H5Tvlen_create(base_tid);
-            ReadJaggedDataImpl(dataset, data, vlen_tid);
+            ReadJaggedDataImpl(dataset_id, data, vlen_tid);
             H5Tclose(vlen_tid);
         }
     }
 
     template<typename Container>
-    void ReadContainerData(const H5::DataSet &dataset, Container &data)
+    void ReadContainerData(hid_t dataset_id, Container &data)
     {
         using T = typename Container::value_type;
-        const H5::DataSpace filespace = dataset.getSpace();
-        int ndims = filespace.getSimpleExtentNdims();
+        HDF5Utils::HID filespace(H5Dget_space(dataset_id));
+        int ndims = H5Sget_simple_extent_ndims(filespace);
         if(ndims == 0)
         {
             if constexpr(not HDF5Utils::IsContainer<T>::value)
             {
                 T scalar;
-                ReadScalarData(dataset, scalar);
+                ReadScalarData(dataset_id, scalar);
                 HDF5Utils::ContainerResize(data, 1);
                 data[0] = scalar;
                 return;
@@ -339,23 +325,21 @@ namespace HDF5Reader_detail
         }
 
         std::vector<hsize_t> dims(ndims);
-        filespace.getSimpleExtentDims(dims.data());
+        H5Sget_simple_extent_dims(filespace, dims.data(), nullptr);
 
-        const H5T_class_t type_class = dataset.getTypeClass();
+        HDF5Utils::HID dtype(H5Dget_type(dataset_id));
+        const H5T_class_t type_class = H5Tget_class(dtype);
 
         if constexpr(HDF5Utils::Rank<T>::value >= 2 && HDF5Utils::ContainsVector<T>::value)
         {
-            // if the data is >= 2D and contains a vector somewhere (can hold jagged data),
-            // check if the HDF5 dataset is VLEN
-            if(type_class == H5T_VLEN and dims.size() == 1 /* in jagged data, dims.size() is 1 */)
+            if(type_class == H5T_VLEN and dims.size() == 1)
             {
-                ReadJaggedDataFromVlen(dataset, data);
+                ReadJaggedDataFromVlen(dataset_id, data);
                 return;
             }   
         }
 
-        // else, data is rectangular
-        ReadRectangularData(dataset, data, dims.data(), ndims);
+        ReadRectangularData(dataset_id, data, dims.data(), ndims);
     }
 }
 

@@ -1,7 +1,7 @@
 #ifndef HDF5READER_HPP
 #define HDF5READER_HPP
 
-#include <H5Cpp.h>
+#include <hdf5.h>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -17,30 +17,26 @@ public:
 
     HDF5Reader(const std::string &filename);
 
-    /**
-    Loads the file `filename` and prepares it for reading.
-    */
+    /** Accepts an already-opened file handle. Caller retains ownership (will NOT be closed by this class). */
+    explicit HDF5Reader(hid_t file_id);
+
+    ~HDF5Reader();
+
     void Load(const std::string &filename);
 
-    /**
-        Reads the names of the groups at `path`.
-    */
     std::vector<std::string> ReadGroupNames(const std::string &path) const;
 
-    /**
-    Checks if the element at `path` exists.
-    */
     bool Exists(const std::string &path) const;
 
-    /**
-    Reads the element at `path` into `data`
-    */
     template<typename T>
     void ReadElement(const std::string &path, T &data) const;
 
+    hid_t GetFileId() const { return file_; }
+
 private:
-    H5::H5File file_;
+    hid_t file_ = H5I_INVALID_HID;
     bool loaded_ = false;
+    bool owns_file_ = true;
 };
 
 template<typename T>
@@ -53,12 +49,13 @@ void HDF5Reader::ReadElement(const std::string &path, T &data) const
 
     auto [groupPath, name] = HDF5Utils::splitPathAndName(path);
 
-    const H5::Group group = HDF5Utils::openGroupPath(file_, groupPath);
-    if(not group.exists(name))
+    HDF5Utils::HID group(HDF5Utils::openGroupPath(file_, groupPath));
+    htri_t exists = H5Lexists(group, name.c_str(), H5P_DEFAULT);
+    if(exists <= 0)
     {
         throw std::runtime_error("HDF5Reader: dataset does not exist: " + path + " in group " + groupPath);
     }
-    const H5::DataSet dataset = group.openDataSet(name);
+    HDF5Utils::HID dataset(H5Dopen2(group, name.c_str(), H5P_DEFAULT));
 
     if constexpr(HDF5Utils::IsContainer<T>::value)
     {

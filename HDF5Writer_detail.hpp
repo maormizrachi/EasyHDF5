@@ -1,7 +1,7 @@
 #ifndef HDF5WRITER_DETAIL_HPP
 #define HDF5WRITER_DETAIL_HPP
 
-#include <H5Cpp.h>
+#include <hdf5.h>
 #include <string>
 #include <deque>
 #include "HDF5Helper.hpp"
@@ -38,32 +38,8 @@ namespace HDF5Writer_detail
         }
     }
 
-    template<typename T>
-    H5::DataType &CreateVarLenType(std::deque<H5::DataType> &types)
-    {
-        if constexpr(not HDF5Utils::IsContainer<T>::value)
-        {
-            if constexpr(HDF5Utils::HasCompType<T>::value)
-            {
-                types.push_back(H5::DataType(HDF5Utils::CompTypeCreator<T>::get()));
-            }
-            else
-            {
-                types.push_back(H5::DataType(HDF5Utils::HDF5Type<T>::value()));
-            }
-            return types.back();
-        }
-        else
-        {
-            using Inner = typename HDF5Utils::InnerType<T>::type;
-            H5::DataType &base = CreateVarLenType<Inner>(types);
-            types.push_back(H5::VarLenType(&base));
-            return types.back();
-        }
-    }
-
     template<typename Container>
-    void WriteJaggedDataNestedVLEN(H5::Group &group, const std::string &name, const Container &data,
+    void WriteJaggedDataNestedVLEN(hid_t group_id, const std::string &name, const Container &data,
                                     std::vector<hvl_t> &vhl, std::deque<std::vector<hvl_t>> &storage)
     {
         using Inner = typename Container::value_type;
@@ -72,16 +48,14 @@ namespace HDF5Writer_detail
         constexpr int vlen_depth = HDF5Utils::Rank<T>::value;
 
         std::vector<hid_t> type_chain;
-        H5::CompType comp_type_holder;
         hid_t base_tid;
         if constexpr(HDF5Utils::HasCompType<Scalar>::value)
         {
-            comp_type_holder = HDF5Utils::CompTypeCreator<Scalar>::get();
-            base_tid = comp_type_holder.getId();
+            base_tid = HDF5Utils::CompTypeCreator<Scalar>::get();
         }
         else
         {
-            base_tid = HDF5Utils::HDF5Type<Scalar>::value().getId();
+            base_tid = HDF5Utils::HDF5Type<Scalar>::value();
         }
         type_chain.push_back(base_tid);
         for (int i = 0; i < vlen_depth; i++)
@@ -92,7 +66,6 @@ namespace HDF5Writer_detail
 
         hsize_t dims[] = {static_cast<hsize_t>(data.size())};
         hid_t space_id = H5Screate_simple(1, dims, nullptr);
-        hid_t group_id = group.getId();
         hid_t dset_id = H5Dcreate2(group_id, name.c_str(), vlen_tid, space_id,
                                   H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
 
@@ -107,7 +80,7 @@ namespace HDF5Writer_detail
     }
 
     template<typename Container>
-    void WriteJaggedData(H5::Group &group, const std::string &name, const Container &data)
+    void WriteJaggedData(hid_t group_id, const std::string &name, const Container &data)
     {
         using Inner = typename Container::value_type;
         using T = typename Inner::value_type;
@@ -117,16 +90,22 @@ namespace HDF5Writer_detail
 
         if constexpr(HDF5Utils::IsContainer<T>::value)
         {
-            WriteJaggedDataNestedVLEN(group, name, data, vhl, storage);
+            WriteJaggedDataNestedVLEN(group_id, name, data, vhl, storage);
         }
         else
         {
-            std::deque<H5::DataType> types;
-            H5::DataType &type = HDF5Writer_detail::CreateVarLenType<Inner>(types);
+            hid_t base_tid;
+            if constexpr(HDF5Utils::HasCompType<T>::value)
+                base_tid = HDF5Utils::CompTypeCreator<T>::get();
+            else
+                base_tid = HDF5Utils::HDF5Type<T>::value();
+
+            hid_t vlen_tid = H5Tvlen_create(base_tid);
             hsize_t dims[] = {static_cast<hsize_t>(data.size())};
-            H5::DataSpace dataspace(1, dims);
-            H5::DataSet dataset = group.createDataSet(name, type, dataspace);
-            dataset.write(vhl.data(), type);
+            HDF5Utils::HID space(H5Screate_simple(1, dims, nullptr));
+            HDF5Utils::HID dset(H5Dcreate2(group_id, name.c_str(), vlen_tid, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT));
+            H5Dwrite(dset, vlen_tid, H5S_ALL, H5S_ALL, H5P_DEFAULT, vhl.data());
+            H5Tclose(vlen_tid);
         }
     }
 
@@ -150,7 +129,7 @@ namespace HDF5Writer_detail
     }
 
     template<typename Container>
-    void WriteRectangularData(H5::Group &group, const std::string &name, const Container &data, const hsize_t *dims, int ndims)
+    void WriteRectangularData(hid_t group_id, const std::string &name, const Container &data, const hsize_t *dims, int ndims)
     {
         using T = typename Container::value_type;
         if constexpr(HDF5Utils::IsContainer<T>::value)
@@ -158,50 +137,51 @@ namespace HDF5Writer_detail
             using Scalar = typename HDF5Utils::InnerType<Container>::type;
             std::vector<Scalar> flat;
             flattenRectangular(data, flat);
-            WriteRectangularData(group, name, flat, dims, ndims);
+            WriteRectangularData(group_id, name, flat, dims, ndims);
         }
         else if constexpr(std::is_same_v<T, std::string>)
         {
-            H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
-            H5::DataSpace dataspace(ndims, dims);
-            H5::DataSet dataset = group.createDataSet(name, strType, dataspace);
+            hid_t strType = HDF5Utils::HDF5Type<std::string>::value();
+            HDF5Utils::HID space(H5Screate_simple(ndims, dims, nullptr));
+            HDF5Utils::HID dset(H5Dcreate2(group_id, name.c_str(), strType, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT));
             if(not data.empty())
             {
                 std::vector<const char*> cstrs(data.size());
                 for(size_t i = 0; i < data.size(); i++)
                     cstrs[i] = data[i].c_str();
-                dataset.write(cstrs.data(), strType);
+                H5Dwrite(dset, strType, H5S_ALL, H5S_ALL, H5P_DEFAULT, cstrs.data());
             }
         }
         else
         {
-            H5::DataSpace dataspace(ndims, dims);
-            H5::DataType mem_type;
+            hid_t mem_type;
             if constexpr(HDF5Utils::HasCompType<T>::value)
             {
-                mem_type = H5::DataType(HDF5Utils::CompTypeCreator<T>::get());
+                mem_type = HDF5Utils::CompTypeCreator<T>::get();
             }
             else
             {
-                mem_type = H5::DataType(HDF5Utils::HDF5Type<T>::value());
+                mem_type = HDF5Utils::HDF5Type<T>::value();
             }
 
-            H5::DataType file_type = mem_type;
+            hid_t file_type = mem_type;
+            HDF5Utils::HID packed_type;
             if constexpr(HDF5Utils::HasCompType<T>::value)
             {
-                hid_t packed_id = H5Tcopy(mem_type.getId());
-                H5Tpack(packed_id);
-                file_type = H5::DataType(packed_id);
+                packed_type = HDF5Utils::HID(H5Tcopy(mem_type));
+                H5Tpack(packed_type);
+                file_type = packed_type;
             }
 
-            H5::DataSet dataset = group.createDataSet(name, file_type, dataspace);
+            HDF5Utils::HID space(H5Screate_simple(ndims, dims, nullptr));
+            HDF5Utils::HID dset(H5Dcreate2(group_id, name.c_str(), file_type, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT));
             if(not data.empty())
             {
-                dataset.write(data.data(), mem_type);
+                H5Dwrite(dset, mem_type, H5S_ALL, H5S_ALL, H5P_DEFAULT, data.data());
             }
             else
             {
-                dataset.write(nullptr, mem_type);
+                H5Dwrite(dset, mem_type, H5S_ALL, H5S_ALL, H5P_DEFAULT, nullptr);
             }
         }
     }
@@ -259,51 +239,49 @@ namespace HDF5Writer_detail
     }
 
     template<typename Container>
-    void WriteContainerData(H5::Group &group, const std::string &name, const Container &data)
+    void WriteContainerData(hid_t group_id, const std::string &name, const Container &data)
     {
         using T = typename Container::value_type;
         if constexpr(HDF5Utils::IsContainer<T>::value) 
         {
-            // high dimension (>= 2)
             std::vector<hsize_t> dims;
             if (isRectangular(data, dims))
             {
-                WriteRectangularData(group, name, data, dims.data(), static_cast<int>(dims.size()));
+                WriteRectangularData(group_id, name, data, dims.data(), static_cast<int>(dims.size()));
             }
             else 
             {
-                WriteJaggedData(group, name, data);
+                WriteJaggedData(group_id, name, data);
             }
         }
         else
         {
-            // flat vector
             hsize_t dims[] = {static_cast<hsize_t>(data.size())};
-            WriteRectangularData(group, name, data, dims, 1);
+            WriteRectangularData(group_id, name, data, dims, 1);
         }
     }
 
     template<typename T>
-    void WriteScalarData(H5::Group &group, const std::string &name, const T &data)
+    void WriteScalarData(hid_t group_id, const std::string &name, const T &data)
     {
         if constexpr(std::is_same_v<T, std::string>)
         {
-            H5::StrType strType(H5::PredType::C_S1, H5T_VARIABLE);
-            H5::DataSpace dataspace;
-            H5::DataSet dataset = group.createDataSet(name, strType, dataspace);
+            hid_t strType = HDF5Utils::HDF5Type<std::string>::value();
+            HDF5Utils::HID space(H5Screate(H5S_SCALAR));
+            HDF5Utils::HID dset(H5Dcreate2(group_id, name.c_str(), strType, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT));
             const char *cstr = data.c_str();
-            dataset.write(&cstr, strType);
+            H5Dwrite(dset, strType, H5S_ALL, H5S_ALL, H5P_DEFAULT, &cstr);
         }
         else
         {
-            H5::DataSpace dataspace;
-            H5::DataType mem_type;
+            HDF5Utils::HID space(H5Screate(H5S_SCALAR));
+            hid_t mem_type;
             if constexpr(HDF5Utils::HasCompType<T>::value)
-                mem_type = H5::DataType(HDF5Utils::CompTypeCreator<T>::get());
+                mem_type = HDF5Utils::CompTypeCreator<T>::get();
             else
-                mem_type = H5::DataType(HDF5Utils::HDF5Type<T>::value());
-            H5::DataSet dataset = group.createDataSet(name, mem_type, dataspace);
-            dataset.write(&data, mem_type);
+                mem_type = HDF5Utils::HDF5Type<T>::value();
+            HDF5Utils::HID dset(H5Dcreate2(group_id, name.c_str(), mem_type, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT));
+            H5Dwrite(dset, mem_type, H5S_ALL, H5S_ALL, H5P_DEFAULT, &data);
         }
     }
 }
